@@ -1,0 +1,114 @@
+# nids-test-runner
+
+Randomized NIDS/IPS test driver built on [3CORESec's tmNIDS](https://github.com/3CORESec/testmynids.org).
+
+It periodically generates **benign traffic that trips IDS/IPS signatures** (the ET Open ruleset and similar), so you can continuously verify that your sensor is actually seeing and alerting on traffic — not silently failing. Designed to run unattended on a Raspberry Pi 4 (or any Linux/macOS host) from cron, with randomized timing and randomized test selection so the checks don't fall into a predictable pattern.
+
+> ⚠️ **Use only on networks you own or are authorized to test.** This tool intentionally emits traffic that security tooling is designed to flag. It does **not** exploit anything or attack third parties — it fetches signature-triggering content from `testmynids.org` and simulates outbound patterns — but you should still expect it to generate alerts.
+
+## What it does
+
+- **Auto-installs tmNIDS** — downloads and caches the upstream script on first run (to `~/.local/share/tmnids/tmNIDS`).
+- **Randomizes _what_ runs** — each batch runs a random-sized, random-order subset of the 15 tmNIDS test cases, with random pauses between them.
+- **Randomizes _when_ it runs** — a probability gate plus random start jitter turn a fixed cron cadence into unpredictable real firing times.
+- **Logs everything** — timestamped output per test to `~/.local/share/tmnids/ids_test_runner.log`.
+- **No dependencies** — pure Python 3 standard library.
+
+## Requirements
+
+- Python 3.9+
+- tmNIDS's own dependencies on the host: `curl`, `nc` (netcat), and `openssl`
+
+On Raspberry Pi OS / Debian / Ubuntu:
+
+```bash
+sudo apt update && sudo apt install -y curl netcat-openbsd openssl python3
+```
+
+## Quick start
+
+```bash
+git clone https://github.com/Francisco-1088/nids-test-runner.git
+cd nids-test-runner
+
+python3 ids_test_runner.py --list          # show the 15 available tests
+python3 ids_test_runner.py --dry-run       # preview a batch, generate no traffic
+python3 ids_test_runner.py                 # run one batch now
+```
+
+## Running it periodically
+
+### Option A — randomized cron (recommended)
+
+Let the script append a crontab entry for you:
+
+```bash
+python3 ids_test_runner.py --install-cron --probability 0.34 --max-jitter 480
+```
+
+This installs a `*/10 * * * *` job, but the `0.34` probability gate and up-to-8-minute
+jitter mean it actually fires a handful of unpredictable times per day. Or add it by hand:
+
+```cron
+*/10 * * * * /usr/bin/python3 /home/pi/nids-test-runner/ids_test_runner.py \
+  --probability 0.34 --max-jitter 480 --min-tests 1 --max-tests 5 \
+  >> /home/pi/ids_test_runner.cron.log 2>&1
+```
+
+### Option B — self-scheduling daemon (no cron)
+
+```bash
+python3 ids_test_runner.py --daemon --daemon-min 20 --daemon-max 180
+```
+
+Loops forever, sleeping a random 20–180 minutes between batches. See
+[`systemd/nids-test-runner.service`](systemd/nids-test-runner.service) for running it
+under systemd on boot.
+
+## Key options
+
+| Flag | Default | Purpose |
+|------|---------|---------|
+| `--tests 1,3,5-8` | all 1–15 | Restrict the random pool to specific test IDs |
+| `--min-tests` / `--max-tests` | 1 / 5 | Batch size range |
+| `--min-gap` / `--max-gap` | 2 / 45 | Random seconds between tests |
+| `--probability` | 1.0 | Chance `[0-1]` a given invocation actually runs (cron gate) |
+| `--max-jitter` | 0 | Random start delay, 0..N seconds |
+| `--timeout` | 60 | Per-test timeout |
+| `--daemon` | off | Self-schedule instead of using cron |
+| `--seed` | — | Seed the RNG for reproducible selection (testing only) |
+| `--dry-run` | off | Show what would run without emitting traffic |
+| `--update` | off | Force re-download of tmNIDS |
+
+Run `python3 ids_test_runner.py --help` for the full list.
+
+## The tests
+
+| # | Test |
+|---|------|
+| 1 | Linux UID (id command output over HTTP) |
+| 2 | HTTP Basic Authentication (cleartext creds) |
+| 3 | HTTP malware user-agents |
+| 4 | Bad certificates & CAs (TLS/DNS/TCP) |
+| 5 | Tor .onion DNS + node connections |
+| 6 | EXE/DLL download over HTTP |
+| 7 | PDF with embedded file |
+| 8 | SSH outbound scan simulation |
+| 9 | Suspicious / sinkhole / DDNS domains |
+| 10 | Anonymous filesharing service (TLS) |
+| 11 | External IP-address lookup services |
+| 12 | URL shortener services |
+| 13 | Policy violation — gaming traffic |
+| 14 | Adware / PUP activity |
+| 15 | Malware C2 beacon |
+
+Test definitions come from upstream tmNIDS; this project only orchestrates *which* run *when*.
+
+## Credits
+
+Built on [3CORESec/testmynids.org](https://github.com/3CORESec/testmynids.org). All the
+actual detection test logic is theirs; this repo is a randomizing scheduler around it.
+
+## License
+
+[MIT](LICENSE)

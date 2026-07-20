@@ -1,0 +1,25 @@
+# Runs nids-test-runner in self-scheduling daemon mode on boot.
+#
+# Install (as root):
+#   sudo cp systemd/nids-test-runner.service /etc/systemd/system/
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now nids-test-runner
+#
+# Adjust User= and the path below to match your host.
+
+[Unit]
+Description=Randomized NIDS/IPS test runner (tmNIDS)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=pi
+ExecStart=/usr/bin/python3 /home/pi/nids-test-runner/ids_test_runner.py \
+    --daemon --daemon-min 20 --daemon-max 180 \
+    --min-tests 1 --max-tests 5 --quiet
+Restart=on-failure
+RestartSec=30
+
+[Install]
+WantedBy=multi-user.target
