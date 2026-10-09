@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import argparse
 import datetime as dt
+import hashlib
 import logging
 import os
 import random
@@ -37,6 +38,15 @@ import urllib.request
 from pathlib import Path
 
 TMNIDS_URL = "https://raw.githubusercontent.com/3CORESec/testmynids.org/master/tmNIDS"
+
+# SHA-256 of a known-good upstream tmNIDS (pinned 2026-10, 9072 bytes). The
+# downloaded script is verified against this before it is ever made executable
+# or run, so a compromised upstream repo/account or CDN cannot silently push
+# code that this tool would then execute under cron. When upstream legitimately
+# updates tmNIDS this hash will no longer match: the tool refuses to run and
+# prints the hash it saw — review the upstream diff, then update this constant
+# (or pass --sha256 <hash>). Use --no-verify only as a deliberate escape hatch.
+TMNIDS_SHA256 = "7016952b1713d09aac0b17bc05d1cc9c589c5ab1ed441233b9413717494fa0c4"
 
 # tmNIDS test flags -> human label. -99 ("run all") is intentionally excluded
 # from the random pool; we compose our own subsets instead.
@@ -67,10 +77,39 @@ log = logging.getLogger("ids_test_runner")
 # --------------------------------------------------------------------------- #
 # tmNIDS acquisition
 # --------------------------------------------------------------------------- #
-def ensure_tmnids(path: Path, force_update: bool = False) -> Path:
-    """Return a path to an executable tmNIDS, downloading it if needed."""
+def _verify_sha256(data: bytes, expected: str) -> None:
+    """Raise if data's SHA-256 doesn't match the expected (pinned) hash."""
+    actual = hashlib.sha256(data).hexdigest()
+    if actual != expected.lower():
+        raise RuntimeError(
+            "tmNIDS integrity check FAILED — refusing to run.\n"
+            f"  expected sha256: {expected}\n"
+            f"  actual   sha256: {actual}\n"
+            "If upstream legitimately changed, review the diff and update "
+            "TMNIDS_SHA256 (or pass --sha256 <hash>); use --no-verify to bypass."
+        )
+
+
+def ensure_tmnids(
+    path: Path,
+    force_update: bool = False,
+    expected_sha: str | None = TMNIDS_SHA256,
+) -> Path:
+    """Return a path to a verified, executable tmNIDS, downloading if needed.
+
+    The cached copy is re-verified on every run (not just at download time), so
+    tampering with the on-disk file is caught too. Pass expected_sha=None to skip
+    verification entirely (escape hatch).
+    """
+    # Reuse a cached copy only if it still matches the pinned hash.
     if path.exists() and not force_update:
-        return path
+        if expected_sha is None:
+            return path
+        try:
+            _verify_sha256(path.read_bytes(), expected_sha)
+            return path
+        except RuntimeError:
+            log.warning("Cached tmNIDS failed integrity check; re-downloading")
 
     path.parent.mkdir(parents=True, exist_ok=True)
     log.info("Downloading tmNIDS from %s", TMNIDS_URL)
@@ -80,6 +119,14 @@ def ensure_tmnids(path: Path, force_update: bool = False) -> Path:
         data = resp.read()
     if not data.lstrip().startswith(b"#!"):
         raise RuntimeError("Downloaded tmNIDS does not look like a shell script")
+
+    # Verify BEFORE making it executable or moving it into place.
+    if expected_sha is not None:
+        _verify_sha256(data, expected_sha)
+        log.info("tmNIDS integrity verified (sha256 %s…)", expected_sha[:12])
+    else:
+        log.warning("tmNIDS integrity verification SKIPPED (--no-verify)")
+
     tmp.write_bytes(data)
     tmp.chmod(tmp.stat().st_mode | stat.S_IEXEC | stat.S_IRUSR)
     tmp.replace(path)
@@ -164,7 +211,10 @@ def do_run(args: argparse.Namespace, rng: random.Random) -> int:
         log.info("Jitter sleep %ds before starting", jitter)
         time.sleep(jitter)
 
-    tmnids = ensure_tmnids(Path(args.tmnids_path), force_update=args.update)
+    expected_sha = None if args.no_verify else (args.sha256 or TMNIDS_SHA256)
+    tmnids = ensure_tmnids(
+        Path(args.tmnids_path), force_update=args.update, expected_sha=expected_sha
+    )
 
     pool = args.tests or list(TESTS.keys())
     pool = [t for t in pool if t in TESTS]
@@ -262,6 +312,10 @@ def build_parser() -> argparse.ArgumentParser:
                    help="Where to cache the tmNIDS script")
     p.add_argument("--update", action="store_true",
                    help="Force re-download of tmNIDS before running")
+    p.add_argument("--sha256", default=None, metavar="HASH",
+                   help="Override the pinned tmNIDS SHA-256 to verify against")
+    p.add_argument("--no-verify", action="store_true",
+                   help="Skip the tmNIDS integrity check (escape hatch; not recommended)")
     p.add_argument("--tests", type=parse_test_list, default=None,
                    metavar="1,3,5-8",
                    help="Restrict the random pool to these test IDs (default: all 1-15)")
@@ -349,11 +403,17 @@ def main(argv: list[str] | None = None) -> int:
 
     rng = random.Random(args.seed) if args.seed is not None else random.Random()
 
-    if args.install_cron:
-        return install_cron(args)
-    if args.daemon:
-        return do_daemon(args, rng)
-    return do_run(args, rng)
+    try:
+        if args.install_cron:
+            return install_cron(args)
+        if args.daemon:
+            return do_daemon(args, rng)
+        return do_run(args, rng)
+    except RuntimeError as e:
+        # Expected failure modes (e.g. tmNIDS integrity mismatch): report
+        # cleanly with a non-zero exit instead of dumping a traceback.
+        log.error("%s", e)
+        return 2
 
 
 if __name__ == "__main__":

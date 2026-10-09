@@ -8,7 +8,7 @@ It periodically generates **benign traffic that trips IDS/IPS signatures** (the 
 
 ## What it does
 
-- **Auto-installs tmNIDS** — downloads and caches the upstream script on first run (to `~/.local/share/tmnids/tmNIDS`).
+- **Auto-installs tmNIDS** — downloads and caches the upstream script on first run (to `~/.local/share/tmnids/tmNIDS`), and **verifies it against a pinned SHA-256** before ever making it executable (see [Integrity](#integrity-of-the-downloaded-tmnids)).
 - **Randomizes _what_ runs** — each batch runs a random-sized, random-order subset of the 15 tmNIDS test cases, with random pauses between them.
 - **Randomizes _when_ it runs** — a probability gate plus random start jitter turn a fixed cron cadence into unpredictable real firing times.
 - **Logs everything** — timestamped output per test to `~/.local/share/tmnids/ids_test_runner.log`.
@@ -79,8 +79,32 @@ under systemd on boot.
 | `--seed` | — | Seed the RNG for reproducible selection (testing only) |
 | `--dry-run` | off | Show what would run without emitting traffic |
 | `--update` | off | Force re-download of tmNIDS |
+| `--sha256 HASH` | pinned | Override the tmNIDS SHA-256 to verify against |
+| `--no-verify` | off | Skip the integrity check (escape hatch; not recommended) |
 
 Run `python3 ids_test_runner.py --help` for the full list.
+
+## Integrity of the downloaded tmNIDS
+
+The runner never blindly executes what it fetches. The downloaded `tmNIDS` is
+checked against a **pinned SHA-256** (`TMNIDS_SHA256` in the script) *before* it
+is made executable or run, and the cached copy on disk is re-verified on every
+invocation — so neither a compromised upstream repo/account or CDN, nor local
+tampering with the cache, can get unreviewed code to run under cron.
+
+When 3CORESec legitimately updates `tmNIDS`, the pinned hash will no longer
+match and the tool will **refuse to run**, printing the hash it saw:
+
+```
+tmNIDS integrity check FAILED — refusing to run.
+  expected sha256: 7016952b...
+  actual   sha256: <new hash>
+```
+
+To adopt the update: review the upstream diff, confirm the new hash
+(`curl -fsSL <url> | shasum -a 256`), then update `TMNIDS_SHA256` (or pass
+`--sha256 <hash>`). `--no-verify` bypasses the check entirely and is intended
+only as a deliberate escape hatch.
 
 ## The tests
 
