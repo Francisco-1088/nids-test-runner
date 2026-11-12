@@ -136,3 +136,15 @@ actual detection test logic is theirs; this repo is a randomizing scheduler arou
 ## License
 
 [MIT](LICENSE)
+
+## Pi Script Manager
+
+This repo is also a single-script *source* for the Pi Script Manager (`manifest.json` at the
+root, script `nids-tests`, category *traffic*). Each job runs **one** batch right away (no
+probability gate or jitter: the Manager decides when) and reports which tests ran.
+
+- `pimgr_run.sh` is the entrypoint; `pimgr_nids.py` reuses this runner's selection and test code.
+- tmNIDS is installed by the Manager's `traffic-gen` profile from the upstream commit whose hash
+  matches `TMNIDS_SHA256`. The wrapper only verifies it; it never downloads (a mismatch fails the job).
+- eth0 only for now: tmNIDS calls `curl`/`nc`/`dig` itself, so its traffic follows the default route.
+- When you bump `TMNIDS_SHA256`, update the commit and sha256 in the Manager's `traffic-gen` profile too.

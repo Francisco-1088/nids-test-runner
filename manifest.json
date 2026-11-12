@@ -1,0 +1,21 @@
+{
+  "name": "nids-tests",
+  "version": "1",
+  "category": "traffic",
+  "description": "One randomized batch of tmNIDS tests: benign traffic that should trip IDS/IPS signatures (eth0)",
+  "entrypoint": "pimgr_run.sh",
+  "requires_root": false,
+  "timeout_s": 3600,
+  "requires": {
+    "commands": ["curl", "dig", "nc", "openssl"]
+  },
+  "params": {
+    "iface": {"type": "iface", "default": "eth0"},
+    "tests": {"type": "string", "default": "1-15"},
+    "min_tests": {"type": "int", "min": 1, "max": 15, "default": 1},
+    "max_tests": {"type": "int", "min": 1, "max": 15, "default": 5},
+    "min_gap_s": {"type": "int", "min": 0, "max": 600, "default": 2},
+    "max_gap_s": {"type": "int", "min": 0, "max": 600, "default": 45},
+    "test_timeout_s": {"type": "int", "min": 10, "max": 300, "default": 60}
+  }
+}
